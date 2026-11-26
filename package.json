@@ -1,5 +1,5 @@
 {
-  "name": "pi-worker-guards",
+  "name": "pi-guards",
   "version": "1.0.0",
   "description": "Pi extension: confirms the agent's risky bash, and guards Durable workers of pi-teamwork and pi-swarm with an approval gate, answer review, and tests after edits.",
   "type": "module",

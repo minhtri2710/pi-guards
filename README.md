@@ -1,10 +1,10 @@
-# pi-worker-guards
+# pi-guards
 
 A Pi extension with durable guards, built on `pi-durable` hooks.
 
 ```sh
-cd ~/Work/pi-worker-guards && npm install --legacy-peer-deps
-pi install ~/Work/pi-worker-guards
+cd ~/Work/pi-guards && npm install --legacy-peer-deps
+pi install ~/Work/pi-guards
 ```
 
 - **Main agent.** A `bash` call that matches a risky pattern (`rm -rf`, `git push`, `sudo`, `npm publish`, `curl | sh`, `kill`, ...) asks for confirmation, for up to five minutes. Without a UI (print or RPC mode) it is blocked.
@@ -12,4 +12,4 @@ pi install ~/Work/pi-worker-guards
 - **Review.** A workflow or worker started with `review: true` gets a reviewer conversation that reads the worker's transcript before its answer stands. `REVISE` sends the worker back with the feedback, at most twice in a row.
 - **Tests after edits.** With a `testCommand`, a run that edited or wrote files runs the command in the worker's directory. A failure sends the worker back with the output's tail, at most twice in a row.
 
-The packages do not import each other. This extension publishes its worker guards on `globalThis` (`Symbol.for("pi-worker-guards.host")`, contract in `registry.ts`); `pi-teamwork` and `pi-swarm` read them when they open their Durable harness. Install or remove it, then restart Pi.
+The packages do not import each other. This extension publishes its worker guards on `globalThis` (`Symbol.for("pi-guards.host")`, contract in `registry.ts`); `pi-teamwork` and `pi-swarm` read them when they open their Durable harness. Install or remove it, then restart Pi.

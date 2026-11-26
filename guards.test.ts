@@ -139,7 +139,7 @@ test("the Pi extension confirms the main agent's risky bash and publishes worker
   assert.equal((await call("rm -rf build")).block, true);
   assert.equal((await call("git push", false)).block, true);
   assert.deepEqual(Object.keys(commands).sort(), ["guards-approve", "guards-deny"]);
-  const host = (globalThis as any)[Symbol.for("pi-worker-guards.host")];
+  const host = (globalThis as any)[Symbol.for("pi-guards.host")];
   assert.equal(host.version, 1);
   assert.deepEqual(host.extensions("teamwork").map((extension: Extension) => extension.name), ["guards.approval", "guards.review", "guards.tests"]);
   assert.equal(host.extensions("teamwork"), host.extensions("teamwork"));
