@@ -1,0 +1,35 @@
+{
+  "name": "pi-worker-guards",
+  "version": "1.0.0",
+  "description": "Durable guards for Pi worker conversations: approval gates for risky bash, answer review, and tests after edits.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.6.1",
+    "@earendil-works/pi-durable": "1.6.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "typebox": "1.4.7"
+  },
+  "files": [
+    "*.ts",
+    "!*.test.ts",
+    "dist/",
+    "scripts/"
+  ],
+  "scripts": {
+    "build": "node --no-warnings scripts/build.mjs",
+    "test": "node --test *.test.ts"
+  }
+}
