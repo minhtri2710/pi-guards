@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BACKGROUND_CONTEXT as C } from "@earendil-works/chord/context";
+import type { JsonObject } from "@earendil-works/pi-durable";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage, type Extension, type Storage } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -42,7 +43,7 @@ async function setup(guard: Extension, responses: FauxResponseStep[], storage: (
   return { harness, worker, faux, open };
 }
 const answerOf = async (harness: Harness, id: number) => JSON.stringify((await (await harness.conversation(id as never, C))!.context(C)).messages);
-const call = (name: string, args: object) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
+const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 
 test("risk patterns flag destructive commands and pass their nearest safe forms", () => {
   for (const command of ["rm -rf build", "git push origin main", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD"]) assert.ok(riskOf(command), command);
