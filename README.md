@@ -1,9 +1,15 @@
 # pi-worker-guards
 
-Durable guards for Pi worker conversations, built on `pi-durable` hooks. `pi-teamwork` and `pi-swarm` select them in every worker.
+A Pi extension with durable guards, built on `pi-durable` hooks.
 
-- **Approval gate.** A worker's `bash` call that matches a risky pattern (`rm -rf`, `git push`, `sudo`, `npm publish`, `curl | sh`, `kill`, ...) parks before it runs. Answer it with `/<host>-approve [task id]` or `/<host>-deny [task id]`; with one pending request the id may be left out. A call nobody answers within an hour is blocked. The call holds no process while it waits and survives a restart.
-- **Review.** With `review` on, a reviewer conversation reads the worker's transcript before its answer stands. `REVISE` sends the worker back with the feedback, at most twice in a row.
+```sh
+cd ~/Work/pi-worker-guards && npm install --legacy-peer-deps
+pi install ~/Work/pi-worker-guards
+```
+
+- **Main agent.** A `bash` call that matches a risky pattern (`rm -rf`, `git push`, `sudo`, `npm publish`, `curl | sh`, `kill`, ...) asks for confirmation, for up to five minutes. Without a UI (print or RPC mode) it is blocked.
+- **Worker approval gate.** With `pi-teamwork` or `pi-swarm` installed too, every worker's risky `bash` call parks before it runs. Answer it with `/guards-approve [host:task]` or `/guards-deny [host:task]`, for example `teamwork:12`; with one pending request the id may be left out. A call nobody answers within an hour is blocked. The call holds no process while it waits and survives a restart.
+- **Review.** A workflow or worker started with `review: true` gets a reviewer conversation that reads the worker's transcript before its answer stands. `REVISE` sends the worker back with the feedback, at most twice in a row.
 - **Tests after edits.** With a `testCommand`, a run that edited or wrote files runs the command in the worker's directory. A failure sends the worker back with the output's tail, at most twice in a row.
 
-Node does not strip TypeScript types under `node_modules`, so the package ships `dist/`, built by `npm run build` with Node's own type stripping. `npm test` checks that `dist/` matches the sources.
+The packages do not import each other. This extension publishes its worker guards on `globalThis` (`Symbol.for("pi-worker-guards.host")`, contract in `registry.ts`); `pi-teamwork` and `pi-swarm` read them when they open their Durable harness. Install or remove it, then restart Pi.

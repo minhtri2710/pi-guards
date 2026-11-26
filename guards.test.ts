@@ -9,7 +9,10 @@ import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage, ty
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Type } from "typebox";
-import { createApprovalExtension, createReviewExtension, createTestsExtension, decide, guardInit, pendingApprovals, revision, riskOf, type GuardConfig } from "./index.ts";
+import { createApprovalExtension, decide, pendingApprovals, riskOf } from "./approval.ts";
+import { guardInit, type GuardConfig } from "./config.ts";
+import { createReviewExtension, revision } from "./review.ts";
+import { createTestsExtension } from "./tests.ts";
 
 const ran: string[] = [];
 const Fake = defineExtension({
@@ -124,16 +127,23 @@ test("tests run after an edit and a failure queues one fix run; a run without ed
   await harness.close(C);
 });
 
-test("dist matches the TypeScript sources", async () => {
-  const { build } = await import("./scripts/build.mjs");
-  const { readFile } = await import("node:fs/promises");
-  const out = await mkdtemp(join(tmpdir(), "guards-dist-"));
-  try {
-    for (const name of await build(import.meta.dirname, out)) {
-      const js = name.replace(/\.ts$/, ".js");
-      assert.equal(await readFile(join(import.meta.dirname, "dist", js), "utf8"), await readFile(join(out, js), "utf8"), `${js} is stale; run npm run build`);
-    }
-  } finally {
-    await rm(out, { recursive: true, force: true });
-  }
+test("the Pi extension confirms the main agent's risky bash and publishes worker guards per host", async () => {
+  const { default: guards } = await import("./index.ts");
+  const handlers: Record<string, Function> = {}, commands: Record<string, any> = {};
+  guards({ on: (name: string, fn: Function) => { handlers[name] = fn; }, registerCommand: (name: string, command: unknown) => { commands[name] = command; } } as any);
+  const answers = [true, false];
+  const ui = { confirm: async () => answers.shift(), notify: () => {} };
+  const call = (command: string, hasUI = true) => handlers.tool_call({ toolName: "bash", input: { command } }, { hasUI, ui });
+  assert.equal(await call("ls -la"), undefined);
+  assert.equal(await call("rm -rf build"), undefined);
+  assert.equal((await call("rm -rf build")).block, true);
+  assert.equal((await call("git push", false)).block, true);
+  assert.deepEqual(Object.keys(commands).sort(), ["guards-approve", "guards-deny"]);
+  const host = (globalThis as any)[Symbol.for("pi-worker-guards.host")];
+  assert.equal(host.version, 1);
+  assert.deepEqual(host.extensions("teamwork").map((extension: Extension) => extension.name), ["guards.approval", "guards.review", "guards.tests"]);
+  assert.equal(host.extensions("teamwork"), host.extensions("teamwork"));
+  assert.notEqual(host.extensions("teamwork")[0], host.extensions("swarm")[0]);
+  assert.equal(host.init({}), undefined);
+  assert.equal(typeof host.init({ review: true }), "function");
 });
