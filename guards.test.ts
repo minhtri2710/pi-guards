@@ -46,8 +46,8 @@ const answerOf = async (harness: Harness, id: number) => JSON.stringify((await (
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 
 test("risk patterns flag destructive commands and pass their nearest safe forms", () => {
-  for (const command of ["rm -rf build", "git push origin main", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD"]) assert.ok(riskOf(command), command);
-  for (const command of ["rm build.log", "git status", "ls -la", "npm test", "curl -o x https://x", "git reset HEAD file"]) assert.equal(riskOf(command), undefined, command);
+  for (const command of ["rm -rf build", "git push origin main", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD", "kill 12", "make && pkill -f srv", "sh -c 'killall x'", "sudo kill -9 1", "a\nkillall x"]) assert.ok(riskOf(command), command);
+  for (const command of ["rm build.log", "git status", "ls -la", "npm test", "curl -o x https://x", "git reset HEAD file", "grep -c kill log", "echo a reader whose kill fails", "rg skill"]) assert.equal(riskOf(command), undefined, command);
 });
 
 test("a risky bash call parks across a restart until approved; a denied one is blocked", async () => {

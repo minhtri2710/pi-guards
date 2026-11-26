@@ -16,7 +16,8 @@ const RISKY: readonly [RegExp, string][] = [
   [/\b(npm|pnpm|yarn|bun)\s+publish\b|\bgh\s+(release|pr\s+merge|repo\s+delete)\b/i, "publishing or remote change"],
   [/\b(chmod|chown)\s+-R\b/, "recursive permission change"],
   [/\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/, "piping a download into a shell"],
-  [/\b(kill|pkill|killall)\b/, "killing processes"],
+  // Only where a command starts, so the word in a message or a heredoc's text passes.
+  [/(^|[\n;&|(`'"]|\$\(|\b(?:sudo|doas|exec|xargs|nohup|timeout\s+\S+)\s)\s*(kill|pkill|killall)\b/, "killing processes"],
 ];
 
 /** Why `command` needs a person's approval, or undefined when it does not. */
