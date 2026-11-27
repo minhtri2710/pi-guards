@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Extension, Harness } from "@earendil-works/pi-durable";
 import { createApprovalExtension, decide, pendingApprovals, type ApprovalRequest } from "./approval.ts";
 import { guardInit } from "./config.ts";
+import { createJevJudge } from "./judge.ts";
 import { publishGuards } from "./registry.ts";
 import { riskOf } from "./risk.ts";
 import { createReviewExtension } from "./review.ts";
@@ -22,9 +23,11 @@ export default function (pi: ExtensionAPI) {
   const harnesses = new Map<string, Harness>();
   // Exact commands the user denied for the rest of this session; the main agent is told not to retry them.
   const deniedForSession = new Set<string>();
-  let ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
+  let ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined, registry: ExtensionContext["modelRegistry"] | undefined;
+  // Jev clears routine flagged commands, as an auto mode does; hard reasons and any Jev failure still ask a person.
+  const judge = createJevJudge(() => registry);
   const id = ({ host, request }: Omit<Pending, "harness">) => `${host}:${request.taskId}`;
-  const describe = (item: Omit<Pending, "harness">) => `${item.host} worker waits for approval (${item.request.reason}): ${item.request.command}\n/guards-approve ${id(item)} or /guards-deny ${id(item)} [reason]`;
+  const describe = (item: Omit<Pending, "harness">) => `${item.host} worker waits for approval (${item.request.reason}${item.request.advice ? `; ${item.request.advice}` : ""}): ${item.request.command}\n/guards-approve ${id(item)} or /guards-deny ${id(item)} [reason]`;
   const pending = async () => {
     const all: Pending[] = [];
     for (const [host, harness] of harnesses) for (const request of await pendingApprovals(harness).catch(() => [])) all.push({ host, harness, request });
@@ -45,14 +48,14 @@ export default function (pi: ExtensionAPI) {
 
   publishGuards({
     version: 1,
-    extensions: (host) => byHost.get(host) ?? byHost.set(host, [createApprovalExtension(notifier(host)), review, tests]).get(host)!,
+    extensions: (host) => byHost.get(host) ?? byHost.set(host, [createApprovalExtension(notifier(host), judge), review, tests]).get(host)!,
     init: (config) => config.review || config.testCommand?.trim() ? guardInit(config) : undefined,
     opened: (host, harness) => { if (harnesses.get(host) === harness) return; harnesses.set(host, harness); void announce().catch(() => {}); },
     closed: (host) => { harnesses.delete(host); void refresh().catch(() => {}); },
     pending: async (host) => (await pending()).filter((item) => item.host === host).map(({ request }) => ({ taskId: request.taskId, conversationId: request.conversationId, command: request.command, reason: request.reason })),
   });
 
-  pi.on("session_start", (_event, ctx) => { ui = ctx.hasUI ? ctx.ui : undefined; deniedForSession.clear(); void announce().catch(() => {}); });
+  pi.on("session_start", (_event, ctx) => { ui = ctx.hasUI ? ctx.ui : undefined; registry = ctx.modelRegistry; deniedForSession.clear(); void announce().catch(() => {}); });
   pi.on("session_shutdown", () => { if (timer) clearInterval(timer); timer = undefined; });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -61,8 +64,11 @@ export default function (pi: ExtensionAPI) {
     const reason = riskOf(command);
     if (!reason) return undefined;
     if (deniedForSession.has(command)) return { block: true, reason: `The user denied this exact command for the rest of this session (${reason}). Do not retry it; ask the user how to proceed.` };
+    const verdict = await judge({ command, reason, cwd: ctx.cwd });
+    if (verdict?.allow) { if (ctx.hasUI) ctx.ui.notify(`Jev allowed ${reason} (${verdict.probability.toFixed(2)}): ${command.replace(/\s+/g, " ").slice(0, 120)}`, "info"); return undefined; }
     if (!ctx.hasUI) return { block: true, reason: `Blocked without a UI to confirm (${reason}).` };
-    const choice = await ctx.ui.select(`Allow ${reason}?\n${command}`, [ALLOW, DENY_ONCE, DENY_SESSION], { timeout: CONFIRM_MS, blockedKind: "permission" });
+    const advice = verdict ? `\nJev says ask (allow ${verdict.probability.toFixed(2)})` : "";
+    const choice = await ctx.ui.select(`Allow ${reason}?${advice}\n${command}`, [ALLOW, DENY_ONCE, DENY_SESSION], { timeout: CONFIRM_MS, blockedKind: "permission" });
     if (choice === ALLOW) return undefined;
     if (choice === DENY_SESSION) {
       deniedForSession.add(command);

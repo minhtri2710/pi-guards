@@ -3,7 +3,8 @@ type Command = { words: string[]; heredocs: string[]; piped: boolean };
 
 /** Tested on one simple command, from its program on. */
 const RISKY: readonly [RegExp, string][] = [
-  [/^git\s+(?:-[cC]\s+\S+\s+)*(?:(?:push|rebase|reset\s+--hard|branch\s+-[a-zA-Z]*D)(?=\s|$)|clean\s+-[a-zA-Z]*f)/, "history-changing git command"],
+  [/^git\s+(?:-[cC]\s+\S+\s+)*push(?=\s|$)/, "pushing to a remote"],
+  [/^git\s+(?:-[cC]\s+\S+\s+)*(?:(?:rebase|reset\s+--hard|branch\s+-[a-zA-Z]*D)(?=\s|$)|clean\s+-[a-zA-Z]*f)/, "history-changing git command"],
   [/^(?:sudo|doas)\b/, "privilege escalation"],
   [/^(?:mkfs\S*|shutdown|reboot)\b|^dd\s+if=/, "disk or system command"],
   [/^(?:npm|pnpm|yarn|bun)\s+publish\b|^gh\s+(?:release|pr\s+merge|repo\s+delete)\b/, "publishing or remote change"],

@@ -13,6 +13,7 @@ import { Type } from "typebox";
 import { createApprovalExtension, decide, pendingApprovals } from "./approval.ts";
 import { riskOf } from "./risk.ts";
 import { guardInit, type GuardConfig } from "./config.ts";
+import { ALLOW_FLOOR, createJevJudge } from "./judge.ts";
 import { createReviewExtension, revision } from "./review.ts";
 import { createTestsExtension } from "./tests.ts";
 
@@ -47,7 +48,7 @@ const answerOf = async (harness: Harness, id: number) => JSON.stringify((await (
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 
 test("risk patterns count only as commands: quoted text, heredoc bodies and messages pass, shells and substitutions still run", () => {
-  const risky = ["rm -rf build", "rm -r /tmp/../etc", "rm -rf /tmp/*", "rm -rf /tmp/a build", "git push origin main", "git -C repo push", "git branch -D x", "git clean -fd", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD",
+  const risky = ["rm -rf build", "rm -r /tmp/../etc", "rm -rf /tmp/*", "rm -rf /tmp/a build", "git push origin main", "git -C repo push", "git rebase main", "git branch -D x", "git clean -fd", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD",
     "kill 12", "make && pkill -f srv", "sh -c 'killall x'", "sudo kill -9 1", "a\nkillall x", "echo \"$(git push)\"", "x=`kill 1`", "xargs kill < pids", "find . -exec rm -rf {} \\;", "timeout 5 rm -rf build",
     "FOO=1 git push", "(cd x && git push)", "if true; then git rebase main; fi", "bash <<EOF\nrm -rf build\nEOF", "cat <<EOF | sh\nrm -rf build\nEOF", "ssh host 'sudo reboot'", "/bin/rm -rf build", "echo 'unclosed; rm -rf build"];
   const safe = ["git commit -m 'run sudo less'", "echo 'git rebase is fine'", "echo a reader whose kill fails", "cat > f <<'EOF'\nkill -HUP 1; git push; rm -rf /\nEOF", "git commit -F - <<EOF\nsudo rm -rf /\nEOF", "echo x # git push",
@@ -155,6 +156,10 @@ test("the Pi extension confirms the main agent's risky bash and publishes worker
   assert.match((await call("git push")).reason, /rest of this session/);
   assert.equal(asked, 3);
   assert.equal((await call("git push origin x", false)).block, true);
+  // With Jev in the session, a routine command runs without the prompt; a push still blocks without a UI.
+  handlers.session_start({}, { hasUI: false, modelRegistry: { findOfType: () => ({}), classify: async () => ({ stopReason: "stop", answers: { verdict: { type: "choice", choice: "allow", probabilities: { allow: 0.95 }, confidence: 1 } } }) } });
+  assert.equal(await call("rm -rf dist", false), undefined);
+  assert.equal((await call("git push", false)).block, true);
   assert.deepEqual(Object.keys(commands).sort(), ["guards-approve", "guards-deny"]);
   const host = (globalThis as any)[Symbol.for("pi-guards.host")];
   assert.equal(host.version, 1);
@@ -164,4 +169,37 @@ test("the Pi extension confirms the main agent's risky bash and publishes worker
   assert.equal(host.init({}), undefined);
   assert.deepEqual(await host.pending("teamwork"), []);
   assert.equal(typeof host.init({ review: true }), "function");
+});
+
+const fakeJev = (allow: number, fail = false) => {
+  const asked: string[] = [];
+  const registry = { findOfType: () => ({ id: "jev-latest" }) as any, classify: async (_model: unknown, context: any) => {
+    asked.push(context.state.command);
+    if (fail) return { stopReason: "error", answers: {} } as any;
+    return { stopReason: "stop", answers: { verdict: { type: "choice", choice: allow >= 0.5 ? "allow" : "ask", probabilities: { allow, ask: 1 - allow }, confidence: 1 } } } as any;
+  } };
+  return { judge: createJevJudge(() => registry), asked };
+};
+
+test("Jev clears a routine flagged command above the floor; hard reasons, low scores and failures leave it to a person", async () => {
+  const sure = fakeJev(0.9), unsure = fakeJev(ALLOW_FLOOR - 0.01), broken = fakeJev(0.9, true);
+  assert.equal((await sure.judge({ command: "rm -rf dist", reason: "recursive or forced rm" }))?.allow, true);
+  assert.equal(await sure.judge({ command: "git push", reason: "pushing to a remote" }), undefined);
+  assert.equal(await sure.judge({ command: "sudo ls", reason: "privilege escalation" }), undefined);
+  assert.deepEqual(sure.asked, ["rm -rf dist"]);
+  assert.equal((await unsure.judge({ command: "git branch -D x", reason: "history-changing git command" }))?.allow, false);
+  assert.equal(await broken.judge({ command: "rm -rf dist", reason: "recursive or forced rm" }), undefined);
+  assert.equal(await createJevJudge(() => undefined)({ command: "rm -rf dist", reason: "recursive or forced rm" }), undefined);
+});
+
+test("a worker's command Jev clears runs without parking, and the verdict is asked once", async () => {
+  const { judge, asked } = fakeJev(0.9);
+  const notified: number[] = [];
+  const { harness, worker } = await setup(createApprovalExtension((request) => notified.push(request.taskId), judge), [call("bash", { command: "rm -rf dist" }), fauxAssistantMessage("cleaned")]);
+  await (await (await worker()).submit({ type: "input", content: "clean" }, C)).wait(C);
+  assert.deepEqual(ran, ["rm -rf dist"]);
+  assert.deepEqual(asked, ["rm -rf dist"]);
+  assert.deepEqual(notified, []);
+  ran.length = 0;
+  await harness.close(C);
 });
