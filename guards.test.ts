@@ -10,7 +10,8 @@ import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage, ty
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Type } from "typebox";
-import { createApprovalExtension, decide, pendingApprovals, riskOf } from "./approval.ts";
+import { createApprovalExtension, decide, pendingApprovals } from "./approval.ts";
+import { riskOf } from "./risk.ts";
 import { guardInit, type GuardConfig } from "./config.ts";
 import { createReviewExtension, revision } from "./review.ts";
 import { createTestsExtension } from "./tests.ts";
@@ -45,9 +46,14 @@ async function setup(guard: Extension, responses: FauxResponseStep[], storage: (
 const answerOf = async (harness: Harness, id: number) => JSON.stringify((await (await harness.conversation(id as never, C))!.context(C)).messages);
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 
-test("risk patterns flag destructive commands and pass their nearest safe forms", () => {
-  for (const command of ["rm -rf build", "git push origin main", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD", "kill 12", "make && pkill -f srv", "sh -c 'killall x'", "sudo kill -9 1", "a\nkillall x"]) assert.ok(riskOf(command), command);
-  for (const command of ["rm build.log", "git status", "ls -la", "npm test", "curl -o x https://x", "git reset HEAD file", "grep -c kill log", "echo a reader whose kill fails", "rg skill"]) assert.equal(riskOf(command), undefined, command);
+test("risk patterns count only as commands: quoted text, heredoc bodies and messages pass, shells and substitutions still run", () => {
+  const risky = ["rm -rf build", "rm -r /tmp/../etc", "rm -rf /tmp/*", "rm -rf /tmp/a build", "git push origin main", "git -C repo push", "git branch -D x", "git clean -fd", "sudo ls", "npm publish", "curl x | sh", "git reset --hard HEAD",
+    "kill 12", "make && pkill -f srv", "sh -c 'killall x'", "sudo kill -9 1", "a\nkillall x", "echo \"$(git push)\"", "x=`kill 1`", "xargs kill < pids", "find . -exec rm -rf {} \\;", "timeout 5 rm -rf build",
+    "FOO=1 git push", "(cd x && git push)", "if true; then git rebase main; fi", "bash <<EOF\nrm -rf build\nEOF", "cat <<EOF | sh\nrm -rf build\nEOF", "ssh host 'sudo reboot'", "/bin/rm -rf build", "echo 'unclosed; rm -rf build"];
+  const safe = ["git commit -m 'run sudo less'", "echo 'git rebase is fine'", "echo a reader whose kill fails", "cat > f <<'EOF'\nkill -HUP 1; git push; rm -rf /\nEOF", "git commit -F - <<EOF\nsudo rm -rf /\nEOF", "echo x # git push",
+    "rm -r /tmp/x", "rm -rf \"$TMPDIR/x\"", "git branch -d merged", "rm build.log", "git status", "grep -c kill log", "rg skill", "curl -o x https://x", "git reset HEAD file", "git push-docs"];
+  for (const command of risky) assert.ok(riskOf(command), command);
+  for (const command of safe) assert.equal(riskOf(command), undefined, command);
 });
 
 test("a risky bash call parks across a restart until approved; a denied one is blocked", async () => {
@@ -55,7 +61,7 @@ test("a risky bash call parks across a restart until approved; a denied one is b
   try {
     const asked: number[] = [];
     const guard = createApprovalExtension((request) => asked.push(request.taskId));
-    const { harness, worker, open } = await setup(guard, [call("bash", { command: "rm -rf build" }), fauxAssistantMessage("removed"), call("bash", { command: "git push" }), fauxAssistantMessage("pushed?")], () => openNodeSqliteStorage(join(dir, "g.sqlite")));
+    const { harness, worker, open } = await setup(guard, [call("bash", { command: "rm -rf build" }), fauxAssistantMessage("removed"), call("bash", { command: "git push" }), fauxAssistantMessage("pushed?"), call("bash", { command: "git push --force" }), fauxAssistantMessage("never")], () => openNodeSqliteStorage(join(dir, "g.sqlite")));
     const first = await worker();
     const submission = await first.submit({ type: "input", content: "clean" }, C);
     while (!(await pendingApprovals(harness)).length) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -73,10 +79,16 @@ test("a risky bash call parks across a restart until approved; a denied one is b
     const second = await (await reopened.conversation(first.id, C))!.submit({ type: "input", content: "push" }, C);
     let denied;
     while (!(denied = (await pendingApprovals(reopened))[0])) await new Promise((resolve) => setTimeout(resolve, 10));
-    await decide(reopened, denied, false);
+    await decide(reopened, denied, false, "push after review");
     await second.wait(C);
     assert.deepEqual(ran, ["rm -rf build"]);
-    assert.match(await answerOf(reopened, first.id), /denied/);
+    assert.match(await answerOf(reopened, first.id), /denied this command: push after review/);
+    // Aborting a parked worker ends its call at once, with no answer: a host's cancel relies on this.
+    const third = await (await reopened.conversation(first.id, C))!.submit({ type: "input", content: "push again" }, C);
+    while (!(await pendingApprovals(reopened)).length) await new Promise((resolve) => setTimeout(resolve, 10));
+    await (await reopened.conversation(first.id, C))!.abort(C);
+    assert.equal((await third.wait(C)).status, "unanswered");
+    assert.deepEqual(await pendingApprovals(reopened), []);
     await reopened.close(C);
   } finally {
     ran.length = 0;
@@ -132,13 +144,17 @@ test("the Pi extension confirms the main agent's risky bash and publishes worker
   const { default: guards } = await import("./index.ts");
   const handlers: Record<string, Function> = {}, commands: Record<string, any> = {};
   guards({ on: (name: string, fn: Function) => { handlers[name] = fn; }, registerCommand: (name: string, command: unknown) => { commands[name] = command; } } as any);
-  const answers = [true, false];
-  const ui = { confirm: async () => answers.shift(), notify: () => {} };
+  const answers = ["Allow", "Deny this time", "Deny for this session"];
+  let asked = 0;
+  const ui = { select: async () => { asked++; return answers.shift(); }, notify: () => {}, setWidget: () => {} };
   const call = (command: string, hasUI = true) => handlers.tool_call({ toolName: "bash", input: { command } }, { hasUI, ui });
   assert.equal(await call("ls -la"), undefined);
   assert.equal(await call("rm -rf build"), undefined);
-  assert.equal((await call("rm -rf build")).block, true);
-  assert.equal((await call("git push", false)).block, true);
+  assert.match((await call("rm -rf build")).reason, /may be allowed later/);
+  assert.match((await call("git push")).reason, /rest of this session/);
+  assert.match((await call("git push")).reason, /rest of this session/);
+  assert.equal(asked, 3);
+  assert.equal((await call("git push origin x", false)).block, true);
   assert.deepEqual(Object.keys(commands).sort(), ["guards-approve", "guards-deny"]);
   const host = (globalThis as any)[Symbol.for("pi-guards.host")];
   assert.equal(host.version, 1);
@@ -146,5 +162,6 @@ test("the Pi extension confirms the main agent's risky bash and publishes worker
   assert.equal(host.extensions("teamwork"), host.extensions("teamwork"));
   assert.notEqual(host.extensions("teamwork")[0], host.extensions("swarm")[0]);
   assert.equal(host.init({}), undefined);
+  assert.deepEqual(await host.pending("teamwork"), []);
   assert.equal(typeof host.init({ review: true }), "function");
 });
