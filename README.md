@@ -3,8 +3,8 @@
 A Pi extension with durable guards, built on `pi-durable` hooks.
 
 ```sh
-cd ~/Work/pi-guards && npm install --legacy-peer-deps
-pi install ~/Work/pi-guards
+cd ~/Work/pi-extension/pi-guards && npm install --legacy-peer-deps
+pi install ~/Work/pi-extension/pi-guards
 ```
 
 - **Risky commands.** A pattern counts only where a command runs (`rm -rf`, `git push`, `git rebase`, `sudo`, `npm publish`, `curl | sh`, `kill`, ...), so the same words in a quote, a commit message or a heredoc pass. `rm -r` under the temp directory and `git branch -d` are not flagged.
